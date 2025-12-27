@@ -1,33 +1,15 @@
-puts "Test 1: Basic output";
+puts "Testing for loops";
 
-puts "Test 2: For loop";
-for i in 0..3 {
+puts "Test 1: Simple for loop 0 to 3";
+for i in 0..4 {
     puts i;
 }
-puts "After for loop";
+puts "After first for loop";
 
-puts "Test 3: While loop";
-let x = 0;
-while x < 3 {
-    puts x;
-    x = x + 1;
+puts "Test 2: For loop 5 to 8";
+for j in 5..9 {
+    puts j;
 }
-puts "After while loop";
+puts "After second for loop";
 
-puts "Test 4: Logical AND";
-let a = true;
-let b = true;
-if a == true && b == true {
-    puts "Both true";
-}
-puts "After AND test";
-
-puts "Test 5: Logical OR";
-let c = false;
-let d = true;
-if c == true || d == true {
-    puts "At least one true";
-}
-puts "After OR test";
-
-puts "All tests complete";
+puts "All done";

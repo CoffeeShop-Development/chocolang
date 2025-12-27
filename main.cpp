@@ -147,9 +147,30 @@ private:
 
     Token number() {
         std::string num;
-        while (pos < source.length() && (std::isdigit(source[pos]) || source[pos] == '.')) {
-            num += source[pos++];
+        bool hasDot = false;
+        
+        while (pos < source.length()) {
+            if (std::isdigit(source[pos])) {
+                num += source[pos++];
+            } else if (source[pos] == '.' && !hasDot) {
+                // Check if next character is also a dot (range operator)
+                if (pos + 1 < source.length() && source[pos + 1] == '.') {
+                    // This is the range operator, stop here
+                    break;
+                }
+                // Check if next character is a digit
+                if (pos + 1 < source.length() && std::isdigit(source[pos + 1])) {
+                    hasDot = true;
+                    num += source[pos++];
+                } else {
+                    // Not part of the number
+                    break;
+                }
+            } else {
+                break;
+            }
         }
+        
         return {TOKEN_NUMBER, num, line};
     }
 
@@ -390,32 +411,53 @@ private:
 
     void ifStatement() {
         Value condition = expression();
-        match(TOKEN_LBRACE);
+        
+        if (!match(TOKEN_LBRACE)) {
+            std::cerr << "Error: Expected '{' after if condition" << std::endl;
+            return;
+        }
+        
         size_t thenStart = current;
         
+        // Find matching closing brace for then block
         int braceCount = 1;
-        while (braceCount > 0 && !isAtEnd()) {
-            if (tokens[current].type == TOKEN_LBRACE) braceCount++;
-            if (tokens[current].type == TOKEN_RBRACE) braceCount--;
-            current++;
+        size_t thenEnd = current;
+        
+        while (braceCount > 0 && thenEnd < tokens.size()) {
+            if (tokens[thenEnd].type == TOKEN_LBRACE) {
+                braceCount++;
+            } else if (tokens[thenEnd].type == TOKEN_RBRACE) {
+                braceCount--;
+            }
+            if (braceCount > 0) {
+                thenEnd++;
+            }
         }
-        size_t thenEnd = current - 1;
 
         size_t elseStart = 0, elseEnd = 0;
         bool hasElse = false;
         
-        if (match(TOKEN_ELSE)) {
+        // Check for else
+        size_t afterThen = thenEnd + 1;
+        if (afterThen < tokens.size() && tokens[afterThen].type == TOKEN_ELSE) {
             hasElse = true;
+            current = afterThen;
+            match(TOKEN_ELSE);
             match(TOKEN_LBRACE);
             elseStart = current;
             
             braceCount = 1;
-            while (braceCount > 0 && !isAtEnd()) {
-                if (tokens[current].type == TOKEN_LBRACE) braceCount++;
-                if (tokens[current].type == TOKEN_RBRACE) braceCount--;
-                current++;
+            elseEnd = current;
+            while (braceCount > 0 && elseEnd < tokens.size()) {
+                if (tokens[elseEnd].type == TOKEN_LBRACE) {
+                    braceCount++;
+                } else if (tokens[elseEnd].type == TOKEN_RBRACE) {
+                    braceCount--;
+                }
+                if (braceCount > 0) {
+                    elseEnd++;
+                }
             }
-            elseEnd = current - 1;
         }
 
         // Evaluate condition as boolean
@@ -433,13 +475,15 @@ private:
             while (current < thenEnd && !isAtEnd() && !hasReturned) {
                 statement();
             }
-            current = hasElse ? elseEnd : thenEnd;
         } else if (hasElse) {
             current = elseStart;
             while (current < elseEnd && !isAtEnd() && !hasReturned) {
                 statement();
             }
         }
+        
+        // Move past the entire if-else statement
+        current = hasElse ? (elseEnd + 1) : (thenEnd + 1);
     }
 
     void whileStatement() {
@@ -473,41 +517,71 @@ private:
 
     void forStatement() {
         Token iterVar = advance();
-        match(TOKEN_IN);
+        
+        if (!match(TOKEN_IN)) {
+            std::cerr << "Error: Expected 'in' in for loop" << std::endl;
+            return;
+        }
         
         Value start = expression();
-        match(TOKEN_DOTDOT);
+        
+        if (!match(TOKEN_DOTDOT)) {
+            std::cerr << "Error: Expected '..' in for loop" << std::endl;
+            return;
+        }
+        
         Value end = expression();
         
-        match(TOKEN_LBRACE);
-        size_t bodyStart = current;
-        
-        // Find the end of the loop body
-        int braceCount = 1;
-        size_t bodyEnd = current;
-        while (braceCount > 0 && bodyEnd < tokens.size()) {
-            if (tokens[bodyEnd].type == TOKEN_LBRACE) braceCount++;
-            if (tokens[bodyEnd].type == TOKEN_RBRACE) braceCount--;
-            bodyEnd++;
+        if (!match(TOKEN_LBRACE)) {
+            std::cerr << "Error: Expected '{' after for range" << std::endl;
+            return;
         }
-        bodyEnd--; // Point to the closing brace
-
-        if (start.type == Value::NUMBER && end.type == Value::NUMBER) {
-            int startInt = static_cast<int>(start.num);
-            int endInt = static_cast<int>(end.num);
-            
-            for (int i = startInt; i < endInt && !hasReturned; i++) {
-                setVariable(iterVar.value, Value(static_cast<double>(i)));
-                current = bodyStart;
-                
-                // Execute loop body
-                while (current < bodyEnd && !isAtEnd() && !hasReturned) {
-                    statement();
-                }
+        
+        size_t loopBodyStart = current;
+        
+        // Find matching closing brace
+        int depth = 1;
+        size_t loopBodyEnd = current;
+        
+        while (depth > 0 && loopBodyEnd < tokens.size()) {
+            if (tokens[loopBodyEnd].type == TOKEN_LBRACE) {
+                depth++;
+            } else if (tokens[loopBodyEnd].type == TOKEN_RBRACE) {
+                depth--;
+            }
+            if (depth > 0) {
+                loopBodyEnd++;
             }
         }
         
-        current = bodyEnd + 1;
+        // Execute loop if we have valid numbers
+        if (start.type == Value::NUMBER && end.type == Value::NUMBER) {
+            int iStart = static_cast<int>(start.num);
+            int iEnd = static_cast<int>(end.num);
+            
+            for (int i = iStart; i < iEnd; i++) {
+                if (hasReturned) break;
+                
+                // Set loop variable
+                setVariable(iterVar.value, Value(static_cast<double>(i)));
+                
+                // Reset to start of body
+                size_t savedCurrent = current;
+                current = loopBodyStart;
+                
+                // Execute body statements
+                while (current < loopBodyEnd) {
+                    if (hasReturned || isAtEnd()) break;
+                    statement();
+                }
+                
+                // Restore current (not needed but for safety)
+                current = savedCurrent;
+            }
+        }
+        
+        // Move past the closing brace
+        current = loopBodyEnd + 1;
     }
 
     Value expression() {

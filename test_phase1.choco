@@ -1,5 +1,8 @@
-// Choco Language Demo - Phase 1 Features
-// Functions, Arrays, For Loops, String Interpolation, Logical Operators
+//////////////////////////////////////
+// ChocoLang 1.0.0 - Chocolate Delight
+// Phase / Version 1 Test File
+// Made by Camila "Mocha" Rose
+//////////////////////////////////////
 
 puts "=== Choco Language - Phase 1 Demo ===";
 puts "";

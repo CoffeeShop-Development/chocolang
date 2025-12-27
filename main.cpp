@@ -521,7 +521,13 @@ private:
             if (braceCount > 0) tryEnd++;
         }
         
-        match(TOKEN_CATCH);
+        current = tryEnd + 1; // Move past try block closing brace
+        
+        if (!match(TOKEN_CATCH)) {
+            std::cerr << "Error: Expected 'catch' after try block" << std::endl;
+            return;
+        }
+        
         Token errorVar = advance();
         match(TOKEN_LBRACE);
         size_t catchStart = current;
@@ -534,6 +540,7 @@ private:
             if (braceCount > 0) catchEnd++;
         }
         
+        // Execute try block
         current = tryStart;
         inTryCatch = true;
         currentException = "";
@@ -542,6 +549,9 @@ private:
             statement();
         }
         
+        inTryCatch = false;
+        
+        // If exception was thrown, execute catch block
         if (!currentException.empty()) {
             scopes.push_back(std::map<std::string, Value>());
             setVariable(errorVar.value, Value(currentException));
@@ -555,7 +565,6 @@ private:
             currentException = "";
         }
         
-        inTryCatch = false;
         current = catchEnd + 1;
     }
 

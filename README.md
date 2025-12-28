@@ -6,7 +6,7 @@
 
 [![Version](https://img.shields.io/badge/version-3.0.0-chocolate.svg)](https://github.com/yourusername/chocolang)
 [![License](https://img.shields.io/badge/license-MIT-brown.svg)](LICENSE)
-[![Made with](https://img.shields.io/badge/version-Milky%20DWay-saddlebrown.svg)](https://github.com/yourusername/chocolang)
+[![Made with](https://img.shields.io/badge/version-Milky%20Way-saddlebrown.svg)](https://github.com/yourusername/chocolang)
 
 **Simple and Expressive** • **Fast to Learn** • **Great Control**
 </div>

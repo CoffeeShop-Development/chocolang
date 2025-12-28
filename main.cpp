@@ -1,5 +1,5 @@
 //////////////////////////////////////
-// ChocoLang 3.0.0 - Milky Way
+// ChocoLang 0.4.0 - Cocoa Dream
 // CoffeeShop Development
 // Made by Camila "Mocha" Rose
 //////////////////////////////////////

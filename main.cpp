@@ -1,5 +1,5 @@
 //////////////////////////////////////
-// ChocoLang 0.4.8 - Mocha Madness Mini-Patch
+// ChocoLang 0.4.8 - Mocha Madness Patch
 // CoffeeShop Development
 // Made by Camila "Mocha" Rose
 //////////////////////////////////////
@@ -42,13 +42,36 @@ struct Token {
     int line;
 };
 
+// Runtime error exception
+class RuntimeError : public std::runtime_error {
+public:
+    int line;
+    RuntimeError(const std::string& msg, int line_num) 
+        : std::runtime_error(msg), line(line_num) {}
+};
+
+// Parser error exception
+class ParseError : public std::runtime_error {
+public:
+    int line;
+    ParseError(const std::string& msg, int line_num) 
+        : std::runtime_error(msg), line(line_num) {}
+};
+
+// Lexer error exception
+class LexerError : public std::runtime_error {
+public:
+    int line;
+    LexerError(const std::string& msg, int line_num) 
+        : std::runtime_error(msg), line(line_num) {}
+};
+
 // Lexer
 class Lexer {
     std::string source;
     size_t pos = 0;
     int line = 1;
     
-    // Keyword lookup table for O(1) keyword identification
     static const std::unordered_map<std::string, TokenType> keywords;
 
 public:
@@ -56,22 +79,28 @@ public:
 
     std::vector<Token> tokenize() {
         std::vector<Token> tokens;
-        tokens.reserve(source.length() / 4); // Preallocate space
+        tokens.reserve(source.length() / 4);
         
-        while (pos < source.length()) {
-            skipWhitespace();
-            if (pos >= source.length()) break;
+        try {
+            while (pos < source.length()) {
+                skipWhitespace();
+                if (pos >= source.length()) break;
 
-            if (source[pos] == '/' && pos + 1 < source.length() && source[pos + 1] == '/') {
-                skipComment();
-                continue;
+                if (source[pos] == '/' && pos + 1 < source.length() && source[pos + 1] == '/') {
+                    skipComment();
+                    continue;
+                }
+
+                Token tok = nextToken();
+                tokens.push_back(std::move(tok));
             }
-
-            Token tok = nextToken();
-            tokens.push_back(std::move(tok));
+            tokens.push_back({TOKEN_EOF, "", line});
+            tokens.shrink_to_fit();
+        } catch (const LexerError& e) {
+            std::cerr << "Lexer Error on line " << e.line << ": " << e.what() << std::endl;
+            throw;
         }
-        tokens.push_back({TOKEN_EOF, "", line});
-        tokens.shrink_to_fit(); // Release unused capacity
+        
         return tokens;
     }
 
@@ -153,21 +182,24 @@ private:
                     pos++;
                     return {TOKEN_AND, "&&", line};
                 }
-                break;
+                throw LexerError("Unexpected character '&'. Did you mean '&&'?", line);
             case '|':
                 if (pos < source.length() && source[pos] == '|') {
                     pos++;
                     return {TOKEN_OR, "||", line};
                 }
                 return {TOKEN_PIPE, "|", line};
+            default:
+                throw LexerError("Unexpected character: '" + std::string(1, c) + "'", line);
         }
         return {TOKEN_EOF, "", line};
     }
 
     Token number() {
         std::string num;
-        num.reserve(16); // Preallocate for typical numbers
+        num.reserve(16);
         bool hasDot = false;
+        int startLine = line;
         
         while (pos < source.length()) {
             if (std::isdigit(static_cast<unsigned char>(source[pos]))) {
@@ -187,32 +219,36 @@ private:
             }
         }
         
-        return {TOKEN_NUMBER, num, line};
+        return {TOKEN_NUMBER, num, startLine};
     }
 
     Token identifier() {
         std::string id;
-        id.reserve(32); // Preallocate for typical identifiers
+        id.reserve(32);
+        int startLine = line;
         
         while (pos < source.length() && (std::isalnum(static_cast<unsigned char>(source[pos])) || source[pos] == '_')) {
             id += source[pos++];
         }
 
-        // Use hash table lookup instead of if-else chain
         auto it = keywords.find(id);
         if (it != keywords.end()) {
-            return {it->second, id, line};
+            return {it->second, id, startLine};
         }
 
-        return {TOKEN_IDENTIFIER, id, line};
+        return {TOKEN_IDENTIFIER, id, startLine};
     }
 
     Token string() {
+        int startLine = line;
         pos++; // skip opening "
         std::string str;
-        str.reserve(64); // Preallocate for typical strings
+        str.reserve(64);
         
         while (pos < source.length() && source[pos] != '"') {
+            if (source[pos] == '\n') {
+                throw LexerError("Unterminated string literal", startLine);
+            }
             if (source[pos] == '\\' && pos + 1 < source.length()) {
                 pos++;
                 switch (source[pos]) {
@@ -230,12 +266,16 @@ private:
                 str += source[pos++];
             }
         }
+        
+        if (pos >= source.length()) {
+            throw LexerError("Unterminated string literal", startLine);
+        }
+        
         pos++; // skip closing "
-        return {TOKEN_STRING, str, line};
+        return {TOKEN_STRING, str, startLine};
     }
 };
 
-// Initialize keyword lookup table
 const std::unordered_map<std::string, TokenType> Lexer::keywords = {
     {"let", TOKEN_LET}, {"fn", TOKEN_FN}, {"if", TOKEN_IF}, {"else", TOKEN_ELSE},
     {"while", TOKEN_WHILE}, {"for", TOKEN_FOR}, {"in", TOKEN_IN}, {"return", TOKEN_RETURN},
@@ -256,14 +296,13 @@ struct Value {
     std::string str;
     bool boolean;
     std::vector<Value> array;
-    std::unordered_map<std::string, Value> structFields; // Changed to unordered_map
+    std::unordered_map<std::string, Value> structFields;
     std::string structType;
     
-    // Lambda/closure support
     std::vector<std::string> lambdaParams;
     size_t lambdaBodyStart;
     size_t lambdaBodyEnd;
-    std::unordered_map<std::string, Value> closureCaptures; // Changed to unordered_map
+    std::unordered_map<std::string, Value> closureCaptures;
 
     Value() : type(NIL), num(0), boolean(false), lambdaBodyStart(0), lambdaBodyEnd(0) {}
     Value(double n) : type(NUMBER), num(n), boolean(false), lambdaBodyStart(0), lambdaBodyEnd(0) {}
@@ -324,19 +363,16 @@ struct Value {
     }
 };
 
-// Function definition
 struct Function {
     std::vector<std::string> params;
     size_t bodyStart;
     size_t bodyEnd;
 };
 
-// Struct definition
 struct StructDef {
     std::vector<std::string> fields;
 };
 
-// Exception for error handling
 struct ChocoException {
     std::string message;
     ChocoException(const std::string& msg) : message(msg) {}
@@ -345,10 +381,10 @@ struct ChocoException {
 // Interpreter
 class Interpreter {
 public:
-    std::unordered_map<std::string, Value> globalVars; // Changed to unordered_map
-    std::vector<std::unordered_map<std::string, Value>> scopes; // Changed to unordered_map
-    std::unordered_map<std::string, Function> functions; // Changed to unordered_map
-    std::unordered_map<std::string, StructDef> structDefs; // Changed to unordered_map
+    std::unordered_map<std::string, Value> globalVars;
+    std::vector<std::unordered_map<std::string, Value>> scopes;
+    std::unordered_map<std::string, Function> functions;
+    std::unordered_map<std::string, StructDef> structDefs;
     std::vector<Token> tokens;
     size_t current;
     
@@ -360,20 +396,27 @@ public:
     bool inTryCatch;
     std::string currentException;
     
-    // Cache for builtin function lookup
     static const std::unordered_map<std::string, bool> builtinFunctions;
 
     Interpreter(const std::vector<Token>& toks) : tokens(toks), current(0), 
         inFunction(false), hasReturned(false), shouldBreak(false), 
         shouldContinue(false), inTryCatch(false) {
         scopes.push_back(std::unordered_map<std::string, Value>());
-        scopes.reserve(16); // Preallocate for typical recursion depth
+        scopes.reserve(16);
         srand(time(nullptr));
     }
 
     void execute() {
-        while (!isAtEnd()) {
-            statement();
+        try {
+            while (!isAtEnd()) {
+                statement();
+            }
+        } catch (const RuntimeError& e) {
+            std::cerr << "\n[Runtime Error] Line " << e.line << ": " << e.what() << std::endl;
+            throw;
+        } catch (const ParseError& e) {
+            std::cerr << "\n[Parse Error] Line " << e.line << ": " << e.what() << std::endl;
+            throw;
         }
     }
     
@@ -381,14 +424,32 @@ public:
         return tokens.empty() || current >= tokens.size() || tokens[current].type == TOKEN_EOF; 
     }
 
-    inline Token peek() const { return tokens[current]; }
-    inline Token advance() { return tokens[current++]; }
+    inline Token peek() const { 
+        if (current >= tokens.size()) {
+            return {TOKEN_EOF, "", tokens.empty() ? 1 : tokens.back().line};
+        }
+        return tokens[current]; 
+    }
+    
+    inline Token advance() { 
+        if (current >= tokens.size()) {
+            throw ParseError("Unexpected end of file", tokens.empty() ? 1 : tokens.back().line);
+        }
+        return tokens[current++]; 
+    }
+    
     inline bool match(TokenType type) {
         if (peek().type == type) {
             advance();
             return true;
         }
         return false;
+    }
+    
+    void expect(TokenType type, const std::string& message) {
+        if (!match(type)) {
+            throw ParseError(message, peek().line);
+        }
     }
 
     inline bool isBuiltinFunction(const std::string& name) const {
@@ -416,7 +477,7 @@ public:
         if (it != globalVars.end()) {
             return it->second;
         }
-        return Value();
+        throw RuntimeError("Undefined variable '" + name + "'", peek().line);
     }
 
     void statement() {
@@ -435,9 +496,15 @@ public:
         } else if (match(TOKEN_THROW)) {
             throwStatement();
         } else if (match(TOKEN_BREAK)) {
+            if (!inFunction) {
+                throw RuntimeError("'break' can only be used inside loops", tokens[current - 1].line);
+            }
             shouldBreak = true;
             match(TOKEN_SEMICOLON);
         } else if (match(TOKEN_CONTINUE)) {
+            if (!inFunction) {
+                throw RuntimeError("'continue' can only be used inside loops", tokens[current - 1].line);
+            }
             shouldContinue = true;
             match(TOKEN_SEMICOLON);
         } else if (match(TOKEN_PUTS)) {
@@ -451,42 +518,54 @@ public:
         } else if (match(TOKEN_MATCH)) {
             matchStatement();
         } else if (match(TOKEN_RETURN)) {
+            if (!inFunction) {
+                throw RuntimeError("'return' can only be used inside functions", tokens[current - 1].line);
+            }
             returnStatement();
         } else if (peek().type == TOKEN_IDENTIFIER && current + 1 < tokens.size() && tokens[current + 1].type == TOKEN_EQUAL) {
             Token name = advance();
             match(TOKEN_EQUAL);
             Value val = expression();
             setVariable(name.value, val);
-            match(TOKEN_SEMICOLON);
+            expect(TOKEN_SEMICOLON, "Expected ';' after assignment");
         } else {
             expression();
-            match(TOKEN_SEMICOLON);
+            expect(TOKEN_SEMICOLON, "Expected ';' after expression");
         }
     }
 
     void letStatement() {
+        if (peek().type != TOKEN_IDENTIFIER) {
+            throw ParseError("Expected variable name after 'let'", peek().line);
+        }
         Token name = advance();
-        match(TOKEN_EQUAL);
+        expect(TOKEN_EQUAL, "Expected '=' after variable name");
         Value val = expression();
         setVariable(name.value, val);
-        match(TOKEN_SEMICOLON);
+        expect(TOKEN_SEMICOLON, "Expected ';' after variable declaration");
     }
 
     void functionDeclaration() {
+        if (peek().type != TOKEN_IDENTIFIER) {
+            throw ParseError("Expected function name after 'fn'", peek().line);
+        }
         Token name = advance();
-        match(TOKEN_LPAREN);
+        expect(TOKEN_LPAREN, "Expected '(' after function name");
         
         std::vector<std::string> params;
         while (!match(TOKEN_RPAREN)) {
+            if (peek().type != TOKEN_IDENTIFIER) {
+                throw ParseError("Expected parameter name", peek().line);
+            }
             Token param = advance();
             params.push_back(std::move(param.value));
             if (!match(TOKEN_COMMA)) {
-                match(TOKEN_RPAREN);
+                expect(TOKEN_RPAREN, "Expected ')' or ',' in parameter list");
                 break;
             }
         }
 
-        match(TOKEN_LBRACE);
+        expect(TOKEN_LBRACE, "Expected '{' before function body");
         size_t bodyStart = current;
         
         int braceCount = 1;
@@ -495,21 +574,31 @@ public:
             if (tokens[current].type == TOKEN_RBRACE) braceCount--;
             current++;
         }
+        
+        if (braceCount != 0) {
+            throw ParseError("Unclosed function body", name.line);
+        }
+        
         size_t bodyEnd = current - 1;
-
         functions[name.value] = {std::move(params), bodyStart, bodyEnd};
     }
 
     void structDeclaration() {
+        if (peek().type != TOKEN_IDENTIFIER) {
+            throw ParseError("Expected struct name after 'struct'", peek().line);
+        }
         Token name = advance();
-        match(TOKEN_LBRACE);
+        expect(TOKEN_LBRACE, "Expected '{' after struct name");
         
         std::vector<std::string> fields;
         while (!match(TOKEN_RBRACE)) {
+            if (peek().type != TOKEN_IDENTIFIER) {
+                throw ParseError("Expected field name in struct", peek().line);
+            }
             Token field = advance();
             fields.push_back(std::move(field.value));
             if (!match(TOKEN_COMMA)) {
-                match(TOKEN_RBRACE);
+                expect(TOKEN_RBRACE, "Expected '}' or ',' in struct definition");
                 break;
             }
         }
@@ -518,39 +607,45 @@ public:
     }
 
     void importStatement() {
+        if (peek().type != TOKEN_IDENTIFIER) {
+            throw ParseError("Expected module name after 'import'", peek().line);
+        }
         Token module = advance();
-        match(TOKEN_SEMICOLON);
+        expect(TOKEN_SEMICOLON, "Expected ';' after import statement");
         
         std::string filename = module.value + ".choco";
         std::ifstream file(filename);
         if (!file) {
-            std::cerr << "Error: Could not import module '" << module.value << "'" << std::endl;
-            return;
+            throw RuntimeError("Could not import module '" + module.value + "'. File '" + filename + "' not found", module.line);
         }
 
         std::stringstream buffer;
         buffer << file.rdbuf();
         std::string source = buffer.str();
 
-        Lexer lexer(source);
-        std::vector<Token> moduleTokens = lexer.tokenize();
-        
-        size_t savedCurrent = current;
-        std::vector<Token> savedTokens = std::move(tokens);
-        
-        tokens = std::move(moduleTokens);
-        current = 0;
-        
-        while (!isAtEnd()) {
-            statement();
+        try {
+            Lexer lexer(source);
+            std::vector<Token> moduleTokens = lexer.tokenize();
+            
+            size_t savedCurrent = current;
+            std::vector<Token> savedTokens = std::move(tokens);
+            
+            tokens = std::move(moduleTokens);
+            current = 0;
+            
+            while (!isAtEnd()) {
+                statement();
+            }
+            
+            tokens = std::move(savedTokens);
+            current = savedCurrent;
+        } catch (...) {
+            throw RuntimeError("Error while importing module '" + module.value + "'", module.line);
         }
-        
-        tokens = std::move(savedTokens);
-        current = savedCurrent;
     }
 
     void tryStatement() {
-        match(TOKEN_LBRACE);
+        expect(TOKEN_LBRACE, "Expected '{' after 'try'");
         size_t tryStart = current;
         
         int braceCount = 1;
@@ -562,14 +657,13 @@ public:
         }
         
         current = tryEnd + 1;
+        expect(TOKEN_CATCH, "Expected 'catch' after try block");
         
-        if (!match(TOKEN_CATCH)) {
-            std::cerr << "Error: Expected 'catch' after try block" << std::endl;
-            return;
+        if (peek().type != TOKEN_IDENTIFIER) {
+            throw ParseError("Expected error variable name after 'catch'", peek().line);
         }
-        
         Token errorVar = advance();
-        match(TOKEN_LBRACE);
+        expect(TOKEN_LBRACE, "Expected '{' after catch variable");
         size_t catchStart = current;
         
         braceCount = 1;
@@ -608,33 +702,30 @@ public:
 
     void throwStatement() {
         Value msg = expression();
-        match(TOKEN_SEMICOLON);
+        expect(TOKEN_SEMICOLON, "Expected ';' after throw statement");
         
         if (inTryCatch) {
             currentException = msg.toString();
         } else {
-            std::cerr << "Uncaught exception: " << msg.toString() << std::endl;
-            exit(1);
+            throw RuntimeError("Uncaught exception: " + msg.toString(), tokens[current - 2].line);
         }
     }
 
     void matchStatement() {
         Value matchValue = expression();
-        match(TOKEN_LBRACE);
+        expect(TOKEN_LBRACE, "Expected '{' after match value");
         
         bool matched = false;
-        
-        // Parse and store all cases first
         std::vector<std::pair<Value, std::pair<size_t, size_t>>> cases;
-        cases.reserve(8); // Preallocate for typical match statements
+        cases.reserve(8);
         size_t defaultStart = 0, defaultEnd = 0;
         bool hasDefault = false;
         
         while (peek().type != TOKEN_RBRACE && !isAtEnd()) {
             if (match(TOKEN_CASE)) {
                 Value caseValue = expression();
-                match(TOKEN_ARROW_FAT);
-                match(TOKEN_LBRACE);
+                expect(TOKEN_ARROW_FAT, "Expected '=>' after case value");
+                expect(TOKEN_LBRACE, "Expected '{' after '=>'");
                 size_t caseBodyStart = current;
                 
                 int braceCount = 1;
@@ -649,8 +740,11 @@ public:
                 current = caseBodyEnd + 1;
                 
             } else if (match(TOKEN_DEFAULT)) {
-                match(TOKEN_ARROW_FAT);
-                match(TOKEN_LBRACE);
+                if (hasDefault) {
+                    throw ParseError("Match statement can only have one 'default' case", tokens[current - 1].line);
+                }
+                expect(TOKEN_ARROW_FAT, "Expected '=>' after 'default'");
+                expect(TOKEN_LBRACE, "Expected '{' after '=>'");
                 hasDefault = true;
                 defaultStart = current;
                 
@@ -668,11 +762,9 @@ public:
             }
         }
         
-        // Save position after match block
+        expect(TOKEN_RBRACE, "Expected '}' at end of match statement");
         size_t afterMatch = current;
-        match(TOKEN_RBRACE);
         
-        // Now execute the matching case
         for (const auto& caseItem : cases) {
             const Value& caseValue = caseItem.first;
             size_t caseBodyStart = caseItem.second.first;
@@ -697,7 +789,6 @@ public:
             }
         }
         
-        // If no match, execute default
         if (!matched && hasDefault) {
             size_t savedCurrent = current;
             current = defaultStart;
@@ -711,37 +802,27 @@ public:
     void returnStatement() {
         returnValue = expression();
         hasReturned = true;
-        match(TOKEN_SEMICOLON);
+        expect(TOKEN_SEMICOLON, "Expected ';' after return statement");
     }
 
     void putsStatement() {
         Value val = expression();
         std::cout << val.toString() << std::endl;
-        match(TOKEN_SEMICOLON);
+        expect(TOKEN_SEMICOLON, "Expected ';' after puts statement");
     }
 
     void ifStatement() {
         Value condition = expression();
-        
-        if (!match(TOKEN_LBRACE)) {
-            std::cerr << "Error: Expected '{' after if condition" << std::endl;
-            return;
-        }
+        expect(TOKEN_LBRACE, "Expected '{' after if condition");
         
         size_t thenStart = current;
-        
         int braceCount = 1;
         size_t thenEnd = current;
         
         while (braceCount > 0 && thenEnd < tokens.size()) {
-            if (tokens[thenEnd].type == TOKEN_LBRACE) {
-                braceCount++;
-            } else if (tokens[thenEnd].type == TOKEN_RBRACE) {
-                braceCount--;
-            }
-            if (braceCount > 0) {
-                thenEnd++;
-            }
+            if (tokens[thenEnd].type == TOKEN_LBRACE) braceCount++;
+            else if (tokens[thenEnd].type == TOKEN_RBRACE) braceCount--;
+            if (braceCount > 0) thenEnd++;
         }
 
         size_t elseStart = 0, elseEnd = 0;
@@ -752,20 +833,15 @@ public:
             hasElse = true;
             current = afterThen;
             match(TOKEN_ELSE);
-            match(TOKEN_LBRACE);
+            expect(TOKEN_LBRACE, "Expected '{' after 'else'");
             elseStart = current;
             
             braceCount = 1;
             elseEnd = current;
             while (braceCount > 0 && elseEnd < tokens.size()) {
-                if (tokens[elseEnd].type == TOKEN_LBRACE) {
-                    braceCount++;
-                } else if (tokens[elseEnd].type == TOKEN_RBRACE) {
-                    braceCount--;
-                }
-                if (braceCount > 0) {
-                    elseEnd++;
-                }
+                if (tokens[elseEnd].type == TOKEN_LBRACE) braceCount++;
+                else if (tokens[elseEnd].type == TOKEN_RBRACE) braceCount--;
+                if (braceCount > 0) elseEnd++;
             }
         }
 
@@ -797,7 +873,7 @@ public:
         size_t conditionStart = current;
         
         Value condition = expression();
-        match(TOKEN_LBRACE);
+        expect(TOKEN_LBRACE, "Expected '{' after while condition");
         size_t bodyStart = current;
         
         int braceCount = 1;
@@ -828,79 +904,66 @@ public:
             
             current = conditionStart;
             condition = expression();
-            match(TOKEN_LBRACE);
+            expect(TOKEN_LBRACE, "Expected '{' after while condition");
         }
         
         current = bodyEnd + 1;
     }
 
     void forStatement() {
-        Token iterVar = advance();
-        
-        if (!match(TOKEN_IN)) {
-            std::cerr << "Error: Expected 'in' in for loop" << std::endl;
-            return;
+        if (peek().type != TOKEN_IDENTIFIER) {
+            throw ParseError("Expected iterator variable name after 'for'", peek().line);
         }
+        Token iterVar = advance();
+        expect(TOKEN_IN, "Expected 'in' after iterator variable");
         
         Value start = expression();
-        
-        if (!match(TOKEN_DOTDOT)) {
-            std::cerr << "Error: Expected '..' in for loop" << std::endl;
-            return;
-        }
-        
+        expect(TOKEN_DOTDOT, "Expected '..' in for loop range");
         Value end = expression();
         
-        if (!match(TOKEN_LBRACE)) {
-            std::cerr << "Error: Expected '{' after for range" << std::endl;
-            return;
+        if (start.type != Value::NUMBER || end.type != Value::NUMBER) {
+            throw RuntimeError("For loop range must be numbers", iterVar.line);
         }
         
+        expect(TOKEN_LBRACE, "Expected '{' after for range");
         size_t loopBodyStart = current;
         
         int depth = 1;
         size_t loopBodyEnd = current;
         
         while (depth > 0 && loopBodyEnd < tokens.size()) {
-            if (tokens[loopBodyEnd].type == TOKEN_LBRACE) {
-                depth++;
-            } else if (tokens[loopBodyEnd].type == TOKEN_RBRACE) {
-                depth--;
-            }
-            if (depth > 0) {
-                loopBodyEnd++;
-            }
+            if (tokens[loopBodyEnd].type == TOKEN_LBRACE) depth++;
+            else if (tokens[loopBodyEnd].type == TOKEN_RBRACE) depth--;
+            if (depth > 0) loopBodyEnd++;
         }
         
-        if (start.type == Value::NUMBER && end.type == Value::NUMBER) {
-            int iStart = static_cast<int>(start.num);
-            int iEnd = static_cast<int>(end.num);
+        int iStart = static_cast<int>(start.num);
+        int iEnd = static_cast<int>(end.num);
+        
+        for (int i = iStart; i < iEnd; i++) {
+            if (hasReturned || shouldBreak) break;
             
-            for (int i = iStart; i < iEnd; i++) {
-                if (hasReturned || shouldBreak) break;
-                
-                setVariable(iterVar.value, Value(static_cast<double>(i)));
-                
-                size_t savedCurrent = current;
-                current = loopBodyStart;
-                shouldContinue = false;
-                
-                while (current < loopBodyEnd) {
-                    if (hasReturned || isAtEnd() || shouldBreak) break;
-                    statement();
-                    if (shouldContinue) {
-                        shouldContinue = false;
-                        break;
-                    }
-                }
-                
-                if (shouldBreak) {
-                    shouldBreak = false;
+            setVariable(iterVar.value, Value(static_cast<double>(i)));
+            
+            size_t savedCurrent = current;
+            current = loopBodyStart;
+            shouldContinue = false;
+            
+            while (current < loopBodyEnd) {
+                if (hasReturned || isAtEnd() || shouldBreak) break;
+                statement();
+                if (shouldContinue) {
+                    shouldContinue = false;
                     break;
                 }
-                
-                current = savedCurrent;
             }
+            
+            if (shouldBreak) {
+                shouldBreak = false;
+                break;
+            }
+            
+            current = savedCurrent;
         }
         
         current = loopBodyEnd + 1;
@@ -989,6 +1052,10 @@ public:
                 else left.num -= right.num;
             } else if (left.type == Value::STRING && right.type == Value::STRING && op == TOKEN_PLUS) {
                 left.str += right.str;
+            } else if (op == TOKEN_PLUS) {
+                throw RuntimeError("Cannot add " + left.getType() + " and " + right.getType(), tokens[current - 1].line);
+            } else {
+                throw RuntimeError("Cannot subtract " + right.getType() + " from " + left.getType(), tokens[current - 1].line);
             }
         }
         return left;
@@ -999,14 +1066,26 @@ public:
         
         while (match(TOKEN_STAR) || match(TOKEN_SLASH) || match(TOKEN_PERCENT)) {
             TokenType op = tokens[current - 1].type;
+            int opLine = tokens[current - 1].line;
             Value right = unary();
             
             if (left.type == Value::NUMBER && right.type == Value::NUMBER) {
-                if (op == TOKEN_STAR) left.num *= right.num;
-                else if (op == TOKEN_SLASH && right.num != 0) left.num /= right.num;
-                else if (op == TOKEN_PERCENT && right.num != 0) {
+                if (op == TOKEN_STAR) {
+                    left.num *= right.num;
+                } else if (op == TOKEN_SLASH) {
+                    if (right.num == 0) {
+                        throw RuntimeError("Division by zero", opLine);
+                    }
+                    left.num /= right.num;
+                } else if (op == TOKEN_PERCENT) {
+                    if (right.num == 0) {
+                        throw RuntimeError("Modulo by zero", opLine);
+                    }
                     left.num = fmod(left.num, right.num);
                 }
+            } else {
+                std::string opStr = (op == TOKEN_STAR) ? "multiply" : (op == TOKEN_SLASH) ? "divide" : "modulo";
+                throw RuntimeError("Cannot " + opStr + " " + left.getType() + " and " + right.getType(), opLine);
             }
         }
         return left;
@@ -1021,11 +1100,13 @@ public:
             return Value(false);
         }
         if (match(TOKEN_MINUS)) {
+            int opLine = tokens[current - 1].line;
             Value val = unary();
             if (val.type == Value::NUMBER) {
                 val.num = -val.num;
+                return val;
             }
-            return val;
+            throw RuntimeError("Cannot negate " + val.getType(), opLine);
         }
         return call();
     }
@@ -1035,49 +1116,64 @@ public:
         
         while (true) {
             if (match(TOKEN_LPAREN)) {
+                int callLine = tokens[current - 1].line;
                 std::vector<Value> args;
                 while (!match(TOKEN_RPAREN)) {
                     args.push_back(expression());
                     if (!match(TOKEN_COMMA)) {
-                        match(TOKEN_RPAREN);
+                        expect(TOKEN_RPAREN, "Expected ')' or ',' in function call");
                         break;
                     }
                 }
                 
                 if (val.type == Value::STRING) {
-                    val = callFunction(val.str, args);
+                    val = callFunction(val.str, args, callLine);
                 } else if (val.type == Value::LAMBDA) {
                     val = callLambda(val, args);
                 } else {
-                    val = Value();
+                    throw RuntimeError("Cannot call " + val.getType(), callLine);
                 }
             } else if (match(TOKEN_LBRACKET)) {
+                int bracketLine = tokens[current - 1].line;
                 Value index = expression();
-                match(TOKEN_RBRACKET);
-                if (val.type == Value::ARRAY && index.type == Value::NUMBER) {
-                    int idx = static_cast<int>(index.num);
-                    if (idx >= 0 && idx < static_cast<int>(val.array.size())) {
-                        val = val.array[idx];
-                    } else {
-                        val = Value();
+                expect(TOKEN_RBRACKET, "Expected ']' after array index");
+                
+                if (val.type == Value::ARRAY) {
+                    if (index.type != Value::NUMBER) {
+                        throw RuntimeError("Array index must be a number, got " + index.getType(), bracketLine);
                     }
-                } else if (val.type == Value::STRING && index.type == Value::NUMBER) {
                     int idx = static_cast<int>(index.num);
-                    if (idx >= 0 && idx < static_cast<int>(val.str.length())) {
-                        val = Value(std::string(1, val.str[idx]));
-                    } else {
-                        val = Value();
+                    if (idx < 0 || idx >= static_cast<int>(val.array.size())) {
+                        throw RuntimeError("Array index " + std::to_string(idx) + " out of bounds (size: " + std::to_string(val.array.size()) + ")", bracketLine);
                     }
+                    val = val.array[idx];
+                } else if (val.type == Value::STRING) {
+                    if (index.type != Value::NUMBER) {
+                        throw RuntimeError("String index must be a number, got " + index.getType(), bracketLine);
+                    }
+                    int idx = static_cast<int>(index.num);
+                    if (idx < 0 || idx >= static_cast<int>(val.str.length())) {
+                        throw RuntimeError("String index " + std::to_string(idx) + " out of bounds (length: " + std::to_string(val.str.length()) + ")", bracketLine);
+                    }
+                    val = Value(std::string(1, val.str[idx]));
+                } else {
+                    throw RuntimeError("Cannot index " + val.getType(), bracketLine);
                 }
             } else if (match(TOKEN_DOT)) {
+                int dotLine = tokens[current - 1].line;
+                if (peek().type != TOKEN_IDENTIFIER) {
+                    throw ParseError("Expected field name after '.'", dotLine);
+                }
                 Token field = advance();
                 if (val.type == Value::STRUCT) {
                     auto it = val.structFields.find(field.value);
                     if (it != val.structFields.end()) {
                         val = it->second;
                     } else {
-                        val = Value();
+                        throw RuntimeError("Struct '" + val.structType + "' has no field '" + field.value + "'", dotLine);
                     }
+                } else {
+                    throw RuntimeError("Cannot access field on " + val.getType(), dotLine);
                 }
             } else {
                 break;
@@ -1088,6 +1184,11 @@ public:
     }
 
     Value callLambda(const Value& lambda, const std::vector<Value>& args) {
+        if (args.size() < lambda.lambdaParams.size()) {
+            throw RuntimeError("Lambda expects " + std::to_string(lambda.lambdaParams.size()) + 
+                             " arguments, got " + std::to_string(args.size()), peek().line);
+        }
+        
         scopes.push_back(lambda.closureCaptures);
         
         for (size_t i = 0; i < lambda.lambdaParams.size() && i < args.size(); i++) {
@@ -1096,6 +1197,8 @@ public:
 
         size_t savedCurrent = current;
         current = lambda.lambdaBodyStart;
+        bool wasInFunction = inFunction;
+        inFunction = true;
         hasReturned = false;
         returnValue = Value();
 
@@ -1105,6 +1208,7 @@ public:
 
         Value result = returnValue;
         hasReturned = false;
+        inFunction = wasInFunction;
         
         scopes.pop_back();
         
@@ -1112,142 +1216,195 @@ public:
         return result;
     }
 
-    Value callFunction(const std::string& name, const std::vector<Value>& args) {
+    Value callFunction(const std::string& name, const std::vector<Value>& args, int callLine) {
         // Higher-order functions
         if (name == "map") {
-            if (args.size() >= 2 && args[0].type == Value::ARRAY && args[1].type == Value::LAMBDA) {
-                std::vector<Value> result;
-                result.reserve(args[0].array.size());
-                for (const auto& item : args[0].array) {
-                    std::vector<Value> lambdaArgs = {item};
-                    result.push_back(callLambda(args[1], lambdaArgs));
-                }
-                return Value(result);
+            if (args.size() < 2) {
+                throw RuntimeError("map() expects 2 arguments (array, lambda), got " + std::to_string(args.size()), callLine);
             }
-            return Value();
+            if (args[0].type != Value::ARRAY) {
+                throw RuntimeError("map() first argument must be an array, got " + args[0].getType(), callLine);
+            }
+            if (args[1].type != Value::LAMBDA) {
+                throw RuntimeError("map() second argument must be a lambda, got " + args[1].getType(), callLine);
+            }
+            std::vector<Value> result;
+            result.reserve(args[0].array.size());
+            for (const auto& item : args[0].array) {
+                std::vector<Value> lambdaArgs = {item};
+                result.push_back(callLambda(args[1], lambdaArgs));
+            }
+            return Value(result);
         }
         
         if (name == "filter") {
-            if (args.size() >= 2 && args[0].type == Value::ARRAY && args[1].type == Value::LAMBDA) {
-                std::vector<Value> result;
-                for (const auto& item : args[0].array) {
-                    std::vector<Value> lambdaArgs = {item};
-                    Value condition = callLambda(args[1], lambdaArgs);
-                    if (condition.type == Value::BOOL && condition.boolean) {
-                        result.push_back(item);
-                    }
-                }
-                return Value(result);
+            if (args.size() < 2) {
+                throw RuntimeError("filter() expects 2 arguments (array, lambda), got " + std::to_string(args.size()), callLine);
             }
-            return Value();
+            if (args[0].type != Value::ARRAY) {
+                throw RuntimeError("filter() first argument must be an array, got " + args[0].getType(), callLine);
+            }
+            if (args[1].type != Value::LAMBDA) {
+                throw RuntimeError("filter() second argument must be a lambda, got " + args[1].getType(), callLine);
+            }
+            std::vector<Value> result;
+            for (const auto& item : args[0].array) {
+                std::vector<Value> lambdaArgs = {item};
+                Value condition = callLambda(args[1], lambdaArgs);
+                if (condition.type == Value::BOOL && condition.boolean) {
+                    result.push_back(item);
+                }
+            }
+            return Value(result);
         }
         
         if (name == "reduce") {
-            if (args.size() >= 3 && args[0].type == Value::ARRAY && args[2].type == Value::LAMBDA) {
-                Value accumulator = args[1];
-                for (const auto& item : args[0].array) {
-                    std::vector<Value> lambdaArgs = {accumulator, item};
-                    accumulator = callLambda(args[2], lambdaArgs);
-                }
-                return accumulator;
+            if (args.size() < 3) {
+                throw RuntimeError("reduce() expects 3 arguments (array, initial, lambda), got " + std::to_string(args.size()), callLine);
             }
-            return Value();
+            if (args[0].type != Value::ARRAY) {
+                throw RuntimeError("reduce() first argument must be an array, got " + args[0].getType(), callLine);
+            }
+            if (args[2].type != Value::LAMBDA) {
+                throw RuntimeError("reduce() third argument must be a lambda, got " + args[2].getType(), callLine);
+            }
+            Value accumulator = args[1];
+            for (const auto& item : args[0].array) {
+                std::vector<Value> lambdaArgs = {accumulator, item};
+                accumulator = callLambda(args[2], lambdaArgs);
+            }
+            return accumulator;
         }
         
         if (name == "typeof") {
-            if (args.size() > 0) {
-                return Value(args[0].getType());
+            if (args.size() == 0) {
+                throw RuntimeError("typeof() expects 1 argument, got 0", callLine);
             }
-            return Value("nil");
+            return Value(args[0].getType());
         }
         
         // Standard library functions
         if (name == "len") {
-            if (args.size() > 0) {
-                if (args[0].type == Value::ARRAY) {
-                    return Value(static_cast<double>(args[0].array.size()));
-                } else if (args[0].type == Value::STRING) {
-                    return Value(static_cast<double>(args[0].str.length()));
-                }
+            if (args.size() == 0) {
+                throw RuntimeError("len() expects 1 argument, got 0", callLine);
             }
-            return Value(0.0);
+            if (args[0].type == Value::ARRAY) {
+                return Value(static_cast<double>(args[0].array.size()));
+            } else if (args[0].type == Value::STRING) {
+                return Value(static_cast<double>(args[0].str.length()));
+            }
+            throw RuntimeError("len() requires array or string, got " + args[0].getType(), callLine);
         }
         
         if (name == "push") {
-            if (args.size() >= 2 && args[0].type == Value::ARRAY) {
-                Value arr = args[0];
-                arr.array.push_back(args[1]);
-                return arr;
+            if (args.size() < 2) {
+                throw RuntimeError("push() expects 2 arguments (array, value), got " + std::to_string(args.size()), callLine);
             }
-            return Value();
+            if (args[0].type != Value::ARRAY) {
+                throw RuntimeError("push() first argument must be an array, got " + args[0].getType(), callLine);
+            }
+            Value arr = args[0];
+            arr.array.push_back(args[1]);
+            return arr;
         }
         
         if (name == "pop") {
-            if (args.size() > 0 && args[0].type == Value::ARRAY) {
-                Value arr = args[0];
-                if (!arr.array.empty()) {
-                    Value last = arr.array.back();
-                    arr.array.pop_back();
-                    return last;
-                }
+            if (args.size() == 0) {
+                throw RuntimeError("pop() expects 1 argument (array), got 0", callLine);
             }
-            return Value();
+            if (args[0].type != Value::ARRAY) {
+                throw RuntimeError("pop() requires an array, got " + args[0].getType(), callLine);
+            }
+            Value arr = args[0];
+            if (arr.array.empty()) {
+                throw RuntimeError("Cannot pop from empty array", callLine);
+            }
+            Value last = arr.array.back();
+            arr.array.pop_back();
+            return last;
         }
         
         if (name == "sqrt") {
-            if (args.size() > 0 && args[0].type == Value::NUMBER) {
-                return Value(sqrt(args[0].num));
+            if (args.size() == 0) {
+                throw RuntimeError("sqrt() expects 1 argument, got 0", callLine);
             }
-            return Value();
+            if (args[0].type != Value::NUMBER) {
+                throw RuntimeError("sqrt() requires a number, got " + args[0].getType(), callLine);
+            }
+            if (args[0].num < 0) {
+                throw RuntimeError("sqrt() of negative number", callLine);
+            }
+            return Value(sqrt(args[0].num));
         }
         
         if (name == "pow") {
-            if (args.size() >= 2 && args[0].type == Value::NUMBER && args[1].type == Value::NUMBER) {
-                return Value(pow(args[0].num, args[1].num));
+            if (args.size() < 2) {
+                throw RuntimeError("pow() expects 2 arguments (base, exponent), got " + std::to_string(args.size()), callLine);
             }
-            return Value();
+            if (args[0].type != Value::NUMBER || args[1].type != Value::NUMBER) {
+                throw RuntimeError("pow() requires two numbers", callLine);
+            }
+            return Value(pow(args[0].num, args[1].num));
         }
         
         if (name == "abs") {
-            if (args.size() > 0 && args[0].type == Value::NUMBER) {
-                return Value(fabs(args[0].num));
+            if (args.size() == 0) {
+                throw RuntimeError("abs() expects 1 argument, got 0", callLine);
             }
-            return Value();
+            if (args[0].type != Value::NUMBER) {
+                throw RuntimeError("abs() requires a number, got " + args[0].getType(), callLine);
+            }
+            return Value(fabs(args[0].num));
         }
         
         if (name == "floor") {
-            if (args.size() > 0 && args[0].type == Value::NUMBER) {
-                return Value(floor(args[0].num));
+            if (args.size() == 0) {
+                throw RuntimeError("floor() expects 1 argument, got 0", callLine);
             }
-            return Value();
+            if (args[0].type != Value::NUMBER) {
+                throw RuntimeError("floor() requires a number, got " + args[0].getType(), callLine);
+            }
+            return Value(floor(args[0].num));
         }
         
         if (name == "ceil") {
-            if (args.size() > 0 && args[0].type == Value::NUMBER) {
-                return Value(ceil(args[0].num));
+            if (args.size() == 0) {
+                throw RuntimeError("ceil() expects 1 argument, got 0", callLine);
             }
-            return Value();
+            if (args[0].type != Value::NUMBER) {
+                throw RuntimeError("ceil() requires a number, got " + args[0].getType(), callLine);
+            }
+            return Value(ceil(args[0].num));
         }
         
         if (name == "round") {
-            if (args.size() > 0 && args[0].type == Value::NUMBER) {
-                return Value(round(args[0].num));
+            if (args.size() == 0) {
+                throw RuntimeError("round() expects 1 argument, got 0", callLine);
             }
-            return Value();
+            if (args[0].type != Value::NUMBER) {
+                throw RuntimeError("round() requires a number, got " + args[0].getType(), callLine);
+            }
+            return Value(round(args[0].num));
         }
         
         if (name == "min") {
-            if (args.size() >= 2 && args[0].type == Value::NUMBER && args[1].type == Value::NUMBER) {
-                return Value(std::min(args[0].num, args[1].num));
+            if (args.size() < 2) {
+                throw RuntimeError("min() expects 2 arguments, got " + std::to_string(args.size()), callLine);
             }
-            return Value();
+            if (args[0].type != Value::NUMBER || args[1].type != Value::NUMBER) {
+                throw RuntimeError("min() requires two numbers", callLine);
+            }
+            return Value(std::min(args[0].num, args[1].num));
         }
         
         if (name == "max") {
-            if (args.size() >= 2 && args[0].type == Value::NUMBER && args[1].type == Value::NUMBER) {
-                return Value(std::max(args[0].num, args[1].num));
+            if (args.size() < 2) {
+                throw RuntimeError("max() expects 2 arguments, got " + std::to_string(args.size()), callLine);
             }
-            return Value();
+            if (args[0].type != Value::NUMBER || args[1].type != Value::NUMBER) {
+                throw RuntimeError("max() requires two numbers", callLine);
+            }
+            return Value(std::max(args[0].num, args[1].num));
         }
         
         if (name == "random") {
@@ -1255,156 +1412,212 @@ public:
         }
         
         if (name == "random_int") {
-            if (args.size() >= 2 && args[0].type == Value::NUMBER && args[1].type == Value::NUMBER) {
-                int min = static_cast<int>(args[0].num);
-                int max = static_cast<int>(args[1].num);
-                return Value(static_cast<double>(min + rand() % (max - min + 1)));
+            if (args.size() < 2) {
+                throw RuntimeError("random_int() expects 2 arguments (min, max), got " + std::to_string(args.size()), callLine);
             }
-            return Value();
+            if (args[0].type != Value::NUMBER || args[1].type != Value::NUMBER) {
+                throw RuntimeError("random_int() requires two numbers", callLine);
+            }
+            int min = static_cast<int>(args[0].num);
+            int max = static_cast<int>(args[1].num);
+            if (min > max) {
+                throw RuntimeError("random_int(): min cannot be greater than max", callLine);
+            }
+            return Value(static_cast<double>(min + rand() % (max - min + 1)));
         }
         
         if (name == "str") {
-            if (args.size() > 0) {
-                return Value(args[0].toString());
+            if (args.size() == 0) {
+                return Value("");
             }
-            return Value("");
+            return Value(args[0].toString());
         }
         
         if (name == "int") {
-            if (args.size() > 0 && args[0].type == Value::NUMBER) {
+            if (args.size() == 0) {
+                throw RuntimeError("int() expects 1 argument, got 0", callLine);
+            }
+            if (args[0].type == Value::NUMBER) {
                 return Value(static_cast<double>(static_cast<int>(args[0].num)));
-            } else if (args.size() > 0 && args[0].type == Value::STRING) {
+            } else if (args[0].type == Value::STRING) {
                 try {
                     return Value(static_cast<double>(std::stoi(args[0].str)));
                 } catch (...) {
-                    return Value(0.0);
+                    throw RuntimeError("int(): cannot convert '" + args[0].str + "' to integer", callLine);
                 }
             }
-            return Value();
+            throw RuntimeError("int() requires number or string, got " + args[0].getType(), callLine);
         }
         
         if (name == "float") {
-            if (args.size() > 0 && args[0].type == Value::STRING) {
+            if (args.size() == 0) {
+                throw RuntimeError("float() expects 1 argument, got 0", callLine);
+            }
+            if (args[0].type == Value::STRING) {
                 try {
                     return Value(std::stod(args[0].str));
                 } catch (...) {
-                    return Value(0.0);
+                    throw RuntimeError("float(): cannot convert '" + args[0].str + "' to float", callLine);
                 }
-            } else if (args.size() > 0 && args[0].type == Value::NUMBER) {
+            } else if (args[0].type == Value::NUMBER) {
                 return args[0];
             }
-            return Value();
+            throw RuntimeError("float() requires number or string, got " + args[0].getType(), callLine);
         }
         
         if (name == "uppercase") {
-            if (args.size() > 0 && args[0].type == Value::STRING) {
-                std::string result = args[0].str;
-                std::transform(result.begin(), result.end(), result.begin(), ::toupper);
-                return Value(result);
+            if (args.size() == 0) {
+                throw RuntimeError("uppercase() expects 1 argument, got 0", callLine);
             }
-            return Value();
+            if (args[0].type != Value::STRING) {
+                throw RuntimeError("uppercase() requires a string, got " + args[0].getType(), callLine);
+            }
+            std::string result = args[0].str;
+            std::transform(result.begin(), result.end(), result.begin(), ::toupper);
+            return Value(result);
         }
         
         if (name == "lowercase") {
-            if (args.size() > 0 && args[0].type == Value::STRING) {
-                std::string result = args[0].str;
-                std::transform(result.begin(), result.end(), result.begin(), ::tolower);
-                return Value(result);
+            if (args.size() == 0) {
+                throw RuntimeError("lowercase() expects 1 argument, got 0", callLine);
             }
-            return Value();
+            if (args[0].type != Value::STRING) {
+                throw RuntimeError("lowercase() requires a string, got " + args[0].getType(), callLine);
+            }
+            std::string result = args[0].str;
+            std::transform(result.begin(), result.end(), result.begin(), ::tolower);
+            return Value(result);
         }
         
         if (name == "substr") {
-            if (args.size() >= 3 && args[0].type == Value::STRING && 
-                args[1].type == Value::NUMBER && args[2].type == Value::NUMBER) {
-                int start = static_cast<int>(args[1].num);
-                int length = static_cast<int>(args[2].num);
-                return Value(args[0].str.substr(start, length));
+            if (args.size() < 3) {
+                throw RuntimeError("substr() expects 3 arguments (string, start, length), got " + std::to_string(args.size()), callLine);
             }
-            return Value();
+            if (args[0].type != Value::STRING) {
+                throw RuntimeError("substr() first argument must be a string, got " + args[0].getType(), callLine);
+            }
+            if (args[1].type != Value::NUMBER || args[2].type != Value::NUMBER) {
+                throw RuntimeError("substr() start and length must be numbers", callLine);
+            }
+            int start = static_cast<int>(args[1].num);
+            int length = static_cast<int>(args[2].num);
+            if (start < 0 || start >= static_cast<int>(args[0].str.length())) {
+                throw RuntimeError("substr(): start index out of bounds", callLine);
+            }
+            return Value(args[0].str.substr(start, length));
         }
         
         if (name == "split") {
-            if (args.size() >= 2 && args[0].type == Value::STRING && args[1].type == Value::STRING) {
-                std::vector<Value> result;
-                std::string str = args[0].str;
-                std::string delim = args[1].str;
-                size_t pos = 0;
-                while ((pos = str.find(delim)) != std::string::npos) {
-                    result.push_back(Value(str.substr(0, pos)));
-                    str.erase(0, pos + delim.length());
-                }
-                result.push_back(Value(str));
-                return Value(result);
+            if (args.size() < 2) {
+                throw RuntimeError("split() expects 2 arguments (string, delimiter), got " + std::to_string(args.size()), callLine);
             }
-            return Value();
+            if (args[0].type != Value::STRING || args[1].type != Value::STRING) {
+                throw RuntimeError("split() requires two strings", callLine);
+            }
+            std::vector<Value> result;
+            std::string str = args[0].str;
+            std::string delim = args[1].str;
+            if (delim.empty()) {
+                throw RuntimeError("split(): delimiter cannot be empty", callLine);
+            }
+            size_t pos = 0;
+            while ((pos = str.find(delim)) != std::string::npos) {
+                result.push_back(Value(str.substr(0, pos)));
+                str.erase(0, pos + delim.length());
+            }
+            result.push_back(Value(str));
+            return Value(result);
         }
         
         if (name == "join") {
-            if (args.size() >= 2 && args[0].type == Value::ARRAY && args[1].type == Value::STRING) {
-                std::string result;
-                for (size_t i = 0; i < args[0].array.size(); i++) {
-                    result += args[0].array[i].toString();
-                    if (i < args[0].array.size() - 1) {
-                        result += args[1].str;
-                    }
-                }
-                return Value(result);
+            if (args.size() < 2) {
+                throw RuntimeError("join() expects 2 arguments (array, separator), got " + std::to_string(args.size()), callLine);
             }
-            return Value();
+            if (args[0].type != Value::ARRAY) {
+                throw RuntimeError("join() first argument must be an array, got " + args[0].getType(), callLine);
+            }
+            if (args[1].type != Value::STRING) {
+                throw RuntimeError("join() second argument must be a string, got " + args[1].getType(), callLine);
+            }
+            std::string result;
+            for (size_t i = 0; i < args[0].array.size(); i++) {
+                result += args[0].array[i].toString();
+                if (i < args[0].array.size() - 1) {
+                    result += args[1].str;
+                }
+            }
+            return Value(result);
         }
         
         if (name == "read_file") {
-            if (args.size() > 0 && args[0].type == Value::STRING) {
-                std::ifstream file(args[0].str);
-                if (file) {
-                    std::stringstream buffer;
-                    buffer << file.rdbuf();
-                    return Value(buffer.str());
-                }
+            if (args.size() == 0) {
+                throw RuntimeError("read_file() expects 1 argument (filename), got 0", callLine);
             }
-            return Value();
+            if (args[0].type != Value::STRING) {
+                throw RuntimeError("read_file() requires a string filename, got " + args[0].getType(), callLine);
+            }
+            std::ifstream file(args[0].str);
+            if (!file) {
+                throw RuntimeError("read_file(): cannot open file '" + args[0].str + "'", callLine);
+            }
+            std::stringstream buffer;
+            buffer << file.rdbuf();
+            return Value(buffer.str());
         }
         
         if (name == "write_file") {
-            if (args.size() >= 2 && args[0].type == Value::STRING && args[1].type == Value::STRING) {
-                std::ofstream file(args[0].str);
-                if (file) {
-                    file << args[1].str;
-                    return Value(true);
-                }
-                return Value(false);
+            if (args.size() < 2) {
+                throw RuntimeError("write_file() expects 2 arguments (filename, content), got " + std::to_string(args.size()), callLine);
             }
-            return Value();
+            if (args[0].type != Value::STRING || args[1].type != Value::STRING) {
+                throw RuntimeError("write_file() requires two strings", callLine);
+            }
+            std::ofstream file(args[0].str);
+            if (!file) {
+                throw RuntimeError("write_file(): cannot open file '" + args[0].str + "' for writing", callLine);
+            }
+            file << args[1].str;
+            return Value(true);
         }
         
         if (name == "append_file") {
-            if (args.size() >= 2 && args[0].type == Value::STRING && args[1].type == Value::STRING) {
-                std::ofstream file(args[0].str, std::ios::app);
-                if (file) {
-                    file << args[1].str;
-                    return Value(true);
-                }
-                return Value(false);
+            if (args.size() < 2) {
+                throw RuntimeError("append_file() expects 2 arguments (filename, content), got " + std::to_string(args.size()), callLine);
             }
-            return Value();
+            if (args[0].type != Value::STRING || args[1].type != Value::STRING) {
+                throw RuntimeError("append_file() requires two strings", callLine);
+            }
+            std::ofstream file(args[0].str, std::ios::app);
+            if (!file) {
+                throw RuntimeError("append_file(): cannot open file '" + args[0].str + "' for appending", callLine);
+            }
+            file << args[1].str;
+            return Value(true);
         }
         
         if (name == "file_exists") {
-            if (args.size() > 0 && args[0].type == Value::STRING) {
-                std::ifstream file(args[0].str);
-                return Value(file.good());
+            if (args.size() == 0) {
+                throw RuntimeError("file_exists() expects 1 argument (filename), got 0", callLine);
             }
-            return Value(false);
+            if (args[0].type != Value::STRING) {
+                throw RuntimeError("file_exists() requires a string filename, got " + args[0].getType(), callLine);
+            }
+            std::ifstream file(args[0].str);
+            return Value(file.good());
         }
 
         // User-defined functions
         auto it = functions.find(name);
         if (it == functions.end()) {
-            return Value();
+            throw RuntimeError("Undefined function '" + name + "'", callLine);
         }
 
         Function& func = it->second;
+        
+        if (args.size() < func.params.size()) {
+            throw RuntimeError("Function '" + name + "' expects " + std::to_string(func.params.size()) + 
+                             " arguments, got " + std::to_string(args.size()), callLine);
+        }
         
         scopes.push_back(std::unordered_map<std::string, Value>());
         
@@ -1414,6 +1627,8 @@ public:
 
         size_t savedCurrent = current;
         current = func.bodyStart;
+        bool wasInFunction = inFunction;
+        inFunction = true;
         hasReturned = false;
         returnValue = Value();
 
@@ -1423,6 +1638,7 @@ public:
 
         Value result = returnValue;
         hasReturned = false;
+        inFunction = wasInFunction;
         
         scopes.pop_back();
         
@@ -1453,17 +1669,18 @@ public:
         if (match(TOKEN_TRUE)) return Value(true);
         if (match(TOKEN_FALSE)) return Value(false);
         
-        // Lambda expression: |params| => { body } or || => { body }
+        // Lambda expression
         if (match(TOKEN_PIPE)) {
             Value lambda;
             lambda.type = Value::LAMBDA;
             
-            // Check if it's an empty parameter list ||
             if (peek().type == TOKEN_PIPE) {
-                advance(); // consume second pipe
+                advance();
             } else {
-                // Parse parameters
                 while (peek().type != TOKEN_PIPE && !isAtEnd()) {
+                    if (peek().type != TOKEN_IDENTIFIER) {
+                        throw ParseError("Expected parameter name in lambda", peek().line);
+                    }
                     Token param = advance();
                     lambda.lambdaParams.push_back(std::move(param.value));
                     if (match(TOKEN_COMMA)) {
@@ -1472,11 +1689,11 @@ public:
                         break;
                     }
                 }
-                match(TOKEN_PIPE);
+                expect(TOKEN_PIPE, "Expected '|' after lambda parameters");
             }
             
-            match(TOKEN_ARROW_FAT);
-            match(TOKEN_LBRACE);
+            expect(TOKEN_ARROW_FAT, "Expected '=>' after lambda parameters");
+            expect(TOKEN_LBRACE, "Expected '{' after '=>'");
             lambda.lambdaBodyStart = current;
             
             int braceCount = 1;
@@ -1488,7 +1705,6 @@ public:
             }
             lambda.lambdaBodyEnd = bodyEnd;
             
-            // Capture current scope variables (closure)
             for (int i = scopes.size() - 1; i >= 0; i--) {
                 for (const auto& var : scopes[i]) {
                     if (lambda.closureCaptures.find(var.first) == lambda.closureCaptures.end()) {
@@ -1506,16 +1722,16 @@ public:
             while (!match(TOKEN_RBRACKET)) {
                 arr.push_back(expression());
                 if (!match(TOKEN_COMMA)) {
-                    match(TOKEN_RBRACKET);
+                    expect(TOKEN_RBRACKET, "Expected ']' or ',' in array literal");
                     break;
                 }
             }
             return Value(arr);
         }
+        
         if (match(TOKEN_IDENTIFIER)) {
             std::string name = tokens[current - 1].value;
             
-            // Check if it's a struct constructor
             auto structIt = structDefs.find(name);
             if (structIt != structDefs.end() && peek().type == TOKEN_LBRACE) {
                 match(TOKEN_LBRACE);
@@ -1524,13 +1740,16 @@ public:
                 structVal.structType = name;
                 
                 while (!match(TOKEN_RBRACE)) {
+                    if (peek().type != TOKEN_IDENTIFIER) {
+                        throw ParseError("Expected field name in struct literal", peek().line);
+                    }
                     Token fieldName = advance();
-                    match(TOKEN_COLON);
+                    expect(TOKEN_COLON, "Expected ':' after field name");
                     Value fieldValue = expression();
                     structVal.structFields[fieldName.value] = std::move(fieldValue);
                     
                     if (!match(TOKEN_COMMA)) {
-                        match(TOKEN_RBRACE);
+                        expect(TOKEN_RBRACE, "Expected '}' or ',' in struct literal");
                         break;
                     }
                 }
@@ -1538,24 +1757,23 @@ public:
                 return structVal;
             }
             
-            // Check if it's a function (user-defined or built-in)
             if (functions.find(name) != functions.end() || isBuiltinFunction(name)) {
                 return Value(name);
             }
             
-            // Otherwise it's a variable
             return getVariable(name);
         }
+        
         if (match(TOKEN_LPAREN)) {
             Value val = expression();
-            match(TOKEN_RPAREN);
+            expect(TOKEN_RPAREN, "Expected ')' after expression");
             return val;
         }
-        return Value();
+        
+        throw ParseError("Unexpected token: '" + peek().value + "'", peek().line);
     }
 };
 
-// Initialize builtin functions lookup table
 const std::unordered_map<std::string, bool> Interpreter::builtinFunctions = {
     {"len", true}, {"push", true}, {"pop", true},
     {"sqrt", true}, {"pow", true}, {"abs", true},
@@ -1569,13 +1787,12 @@ const std::unordered_map<std::string, bool> Interpreter::builtinFunctions = {
 };
 
 int main(int argc, char* argv[]) {
-    // REPL mode (no arguments)
     if (argc == 1) {
-        std::cout << "===============================================" << std::endl;
-        std::cout << "  ChocoLang 0.4.8 - Mocha Madness Mini-Patch" << std::endl;
-        std::cout << "  Interactive REPL (REL-0.1.1)" << std::endl;
+        std::cout << "======================================" << std::endl;
+        std::cout << "  ChocoLang 0.4.8 - Mocha Madness" << std::endl;
+        std::cout << "  Interactive REPL" << std::endl;
         std::cout << "  Type 'exit' or 'quit' to leave" << std::endl;
-        std::cout << "===============================================" << std::endl;
+        std::cout << "======================================" << std::endl;
         std::cout << std::endl;
         
         std::vector<Token> emptyTokens;
@@ -1591,22 +1808,18 @@ int main(int argc, char* argv[]) {
                 break;
             }
             
-            // Trim whitespace
             line.erase(0, line.find_first_not_of(" \t\n\r"));
             line.erase(line.find_last_not_of(" \t\n\r") + 1);
             
-            // Check for exit commands
             if (line == "exit" || line == "quit") {
                 std::cout << "Goodbye!" << std::endl;
                 break;
             }
             
-            // Skip empty lines
             if (line.empty()) {
                 continue;
             }
             
-            // Check for special commands
             if (line == "help") {
                 std::cout << "ChocoLang REPL Commands:" << std::endl;
                 std::cout << "  exit, quit     - Exit the REPL" << std::endl;
@@ -1633,18 +1846,36 @@ int main(int argc, char* argv[]) {
             }
             
             if (line == "vars") {
-                std::cout << "Variables: (feature coming soon)" << std::endl;
+                std::cout << "Defined variables:" << std::endl;
+                if (repl.scopes.empty() || repl.scopes[0].empty()) {
+                    std::cout << "  (none)" << std::endl;
+                } else {
+                    for (const auto& var : repl.scopes[0]) {
+                        std::cout << "  " << var.first << " = " << var.second.toString() << std::endl;
+                    }
+                }
                 lineNumber++;
                 continue;
             }
             
             if (line == "funcs") {
-                std::cout << "Functions: (feature coming soon)" << std::endl;
+                std::cout << "Defined functions:" << std::endl;
+                if (repl.functions.empty()) {
+                    std::cout << "  (none)" << std::endl;
+                } else {
+                    for (const auto& func : repl.functions) {
+                        std::cout << "  " << func.first << "(";
+                        for (size_t i = 0; i < func.second.params.size(); i++) {
+                            std::cout << func.second.params[i];
+                            if (i < func.second.params.size() - 1) std::cout << ", ";
+                        }
+                        std::cout << ")" << std::endl;
+                    }
+                }
                 lineNumber++;
                 continue;
             }
             
-            // Add semicolon if missing for single statements
             if (line.back() != ';' && line.back() != '}') {
                 line += ";";
             }
@@ -1653,11 +1884,9 @@ int main(int argc, char* argv[]) {
                 Lexer lexer(line);
                 std::vector<Token> tokens = lexer.tokenize();
                 
-                // Save interpreter state
                 size_t savedCurrent = repl.current;
                 std::vector<Token> savedTokens = std::move(repl.tokens);
                 
-                // Execute the line
                 repl.tokens = std::move(tokens);
                 repl.current = 0;
                 
@@ -1665,10 +1894,15 @@ int main(int argc, char* argv[]) {
                     repl.statement();
                 }
                 
-                // Restore for next iteration
                 repl.tokens = std::move(savedTokens);
                 repl.current = savedCurrent;
                 
+            } catch (const LexerError& e) {
+                std::cerr << "Lexer Error: " << e.what() << std::endl;
+            } catch (const ParseError& e) {
+                std::cerr << "Parse Error: " << e.what() << std::endl;
+            } catch (const RuntimeError& e) {
+                std::cerr << "Runtime Error: " << e.what() << std::endl;
             } catch (const std::exception& e) {
                 std::cerr << "Error: " << e.what() << std::endl;
             } catch (...) {
@@ -1681,7 +1915,6 @@ int main(int argc, char* argv[]) {
         return 0;
     }
     
-    // File execution mode
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " [file.choco]" << std::endl;
         std::cerr << "       " << argv[0] << "              (for REPL mode)" << std::endl;
@@ -1690,7 +1923,7 @@ int main(int argc, char* argv[]) {
 
     std::ifstream file(argv[1]);
     if (!file) {
-        std::cerr << "Error: Could not open file " << argv[1] << std::endl;
+        std::cerr << "Error: Could not open file '" << argv[1] << "'" << std::endl;
         return 1;
     }
 
@@ -1698,11 +1931,22 @@ int main(int argc, char* argv[]) {
     buffer << file.rdbuf();
     std::string source = buffer.str();
 
-    Lexer lexer(source);
-    std::vector<Token> tokens = lexer.tokenize();
+    try {
+        Lexer lexer(source);
+        std::vector<Token> tokens = lexer.tokenize();
 
-    Interpreter interpreter(tokens);
-    interpreter.execute();
-
-    return 0;
+        Interpreter interpreter(tokens);
+        interpreter.execute();
+        
+        return 0;
+    } catch (const LexerError& e) {
+        return 1;
+    } catch (const ParseError& e) {
+        return 1;
+    } catch (const RuntimeError& e) {
+        return 1;
+    } catch (...) {
+        std::cerr << "Fatal error occurred" << std::endl;
+        return 1;
+    }
 }

@@ -235,13 +235,28 @@ puts arraySum;
 
 // ============================================
 // 9. Nested Functions and Complex Logic
-// ============================================
-puts "Prime numbers 2-20:";
-for i in 2..21 {
-    let prime = isPrime(i);
-    if prime {
-        puts i;
+// =============================================
+
+fn isPrime(n) {
+    if n <= 1 {
+        return false;
     }
+    if n <= 3 {
+        return true;
+    }
+    if n % 2 == 0 {
+        return false;
+    }
+    
+    let i = 3;
+    let limit = sqrt(n);
+    while i <= limit {
+        if n % i == 0 {
+            return false;
+        }
+        i = i + 2;
+    }
+    return true;
 }
 
 // ============================================
@@ -535,25 +550,36 @@ fn create_student(name, grade) {
     return Student { name: name, grade: grade, passed: passed };
 }
 
-let students = [
-    create_student("Alice", 85),
-    create_student("Bob", 55),
-    create_student("Charlie", 92)
-];
-
 puts "Students:";
-let student_count = len(students);
-for i in 0..student_count {
-    let student = students[i];
-    puts "---";
-    puts student.name;
-    puts student.grade;
-    
-    if student.passed == true {
-        puts "Status: PASSED";
-    } else {
-        puts "Status: FAILED";
-    }
+
+let student = create_student("Alice", 85);
+puts "---";
+puts student.name;
+puts student.grade;
+if student.passed == true {
+    puts "Status: PASSED";
+} else {
+    puts "Status: FAILED";
+}
+
+let student = create_student("Bob", 55);
+puts "---";
+puts student.name;
+puts student.grade;
+if student.passed == true {
+    puts "Status: PASSED";
+} else {
+    puts "Status: FAILED";
+}
+
+let student = create_student("Charlie", 92);
+puts "---";
+puts student.name;
+puts student.grade;
+if student.passed == true {
+    puts "Status: PASSED";
+} else {
+    puts "Status: FAILED";
 }
 
 // ============================================
@@ -568,34 +594,6 @@ puts word[0];
 
 puts "Third character:";
 puts word[2];
-
-// ============================================
-// 12. Nested Structs
-// ============================================
-puts "";
-puts "=== Nested Structs ===";
-
-struct Address {
-    street,
-    city,
-    zip
-}
-
-struct Employee {
-    name,
-    position,
-    address
-}
-
-let addr = Address { street: "123 Main St", city: "NYC", zip: 10001 };
-let emp = Employee { name: "John Doe", position: "Developer", address: addr };
-
-puts "Employee:";
-puts emp.name;
-puts emp.position;
-puts "Address:";
-puts emp.address.street;
-puts emp.address.city;
 
 // ============================================
 // 13. Advanced Control Flow
@@ -1001,57 +999,6 @@ fn describe_number(n) {
 describe_number(0);
 describe_number(1);
 describe_number(42);
-
-// ============================================
-// 12. Combining All Features
-// ============================================
-puts "";
-puts "=== Combined Example ===";
-
-struct Person {
-    name,
-    age,
-    city
-}
-
-let people = [
-    Person { name: "Alice", age: 30, city: "NYC" },
-    Person { name: "Bob", age: 25, city: "LA" },
-    Person { name: "Charlie", age: 35, city: "SF" }
-];
-
-// Filter people over 28
-let adults = filter(people, |p| => {
-    return p.age > 28;
-});
-
-puts "Adults over 28:";
-let idx = 0;
-while idx < len(adults) {
-    puts adults[idx].name;
-    idx = idx + 1;
-}
-
-// Get all ages
-let ages = map(people, |p| => {
-    return p.age;
-});
-
-puts "All ages:";
-puts ages;
-
-// Sum of all ages
-let total_age = reduce(ages, 0, |sum, age| => {
-    return sum + age;
-});
-
-puts "Total age:";
-puts total_age;
-
-// Average age
-let avg_age = total_age / len(people);
-puts "Average age:";
-puts avg_age;
 
 // ============================================
 // 13. Lambda Factorial

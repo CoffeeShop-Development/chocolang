@@ -73,7 +73,7 @@ puts "19. Enhanced error messages - DONE";
 puts "";
 
 puts "<=== Version 0.5.0 - Nutty Nougat";
-puts "20. Input Functionality";
+puts "20. Input Functionality - DONE";
 puts "";
 
 puts "<=== Version 0.5.5 - Hazelnut Heaven Patch ===>";

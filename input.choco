@@ -1,0 +1,34 @@
+let name = input("What's your name? ");
+puts("Oh! Hello #{name}, nice to meet you.");
+
+puts "#{name}, why don't you try my simple calculator?";
+let a = input("Enter first number: ");
+let b = input("Enter second number: ");
+
+let num1 = float(a);
+let num2 = float(b);
+
+let sum = num1 + num2;
+puts "Sum: #{sum}";
+
+let secret = random_int(1, 100);
+let guess = 0;
+let attempts = 0;
+
+puts "Guess a number between 1 and 100!";
+
+while guess != secret {
+    let input_str = input("Your guess: ");
+    guess = int(input_str);
+    attempts = attempts + 1;
+    
+    if guess < secret {
+        puts "Too low!";
+    } else {
+        if guess > secret {
+            puts "Too high!";
+        }
+    }
+}
+
+puts "Correct! You guessed it in #{attempts} attempts!";

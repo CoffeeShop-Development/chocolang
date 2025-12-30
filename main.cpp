@@ -1,5 +1,5 @@
 //////////////////////////////////////
-// ChocoLang 0.4.8 - Mocha Madness Patch
+// ChocoLang 0.5.0 - Nutty Nougat
 // CoffeeShop Development
 // Made by Camila "Mocha" Rose
 //////////////////////////////////////
@@ -1617,6 +1617,30 @@ public:
             std::ifstream file(args[0].str);
             return Value(file.good());
         }
+        
+        if (name == "input") {
+            // input() - read a line from stdin
+            // input(prompt) - print prompt then read a line
+            std::string prompt = "";
+            if (args.size() > 0) {
+                if (args[0].type != Value::STRING) {
+                    throw RuntimeError("input() prompt must be a string, got " + args[0].getType(), callLine);
+                }
+                prompt = args[0].str;
+            }
+            
+            if (!prompt.empty()) {
+                std::cout << prompt;
+                std::cout.flush();
+            }
+            
+            std::string line;
+            if (std::getline(std::cin, line)) {
+                return Value(line);
+            } else {
+                return Value("");
+            }
+        }
 
         // User-defined functions
         auto it = functions.find(name);
@@ -1795,14 +1819,15 @@ const std::unordered_map<std::string, bool> Interpreter::builtinFunctions = {
     {"uppercase", true}, {"lowercase", true}, {"substr", true},
     {"split", true}, {"join", true},
     {"read_file", true}, {"write_file", true}, {"append_file", true}, {"file_exists", true},
-    {"map", true}, {"filter", true}, {"reduce", true}, {"typeof", true}
+    {"map", true}, {"filter", true}, {"reduce", true}, {"typeof", true},
+    {"input", true}
 };
 
 int main(int argc, char* argv[]) {
     if (argc == 1) {
         std::cout << "======================================" << std::endl;
-        std::cout << "  ChocoLang 0.4.8 - Mocha Madness" << std::endl;
-        std::cout << "  Interactive REPL" << std::endl;
+        std::cout << "  ChocoLang 0.5.0 - Nutty Nougat" << std::endl;
+        std::cout << "  REPL (CocoaInterpreter v0.1.1)" << std::endl;
         std::cout << "  Type 'exit' or 'quit' to leave" << std::endl;
         std::cout << "======================================" << std::endl;
         std::cout << std::endl;

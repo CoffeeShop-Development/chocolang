@@ -124,7 +124,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.io.choco",
-          "match": "\\b(puts|print|println|input|match|case|default|uppercase|lowercase|substr|split|join)\\b"
+          "match": "\\b(puts|print|println|input|match|case|default|uppercase|lowercase|substr|split|join|import)\\b"
         },
         {
           "name": "support.function.builtin.conversion.choco",

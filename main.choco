@@ -81,14 +81,13 @@ print "21. Testing framework - DONE";
 print "";
 
 print "<=== Version 0.6.0 - Almond Amour ===>";
-print "22. GUI Library";
+print "22. GUI Library - DONE";
 print "";
 
 print "<=== Version 0.6.5 - Macadamia Magic Patch ===>";
-print "23. Stability improvements";
+print "23. Default Compiler - DONE";
 
 print "";
 
 print "<=== Version 1.0.0 - Choco Crunch ===>";
-print "24. Documentation generator";
-print "25. Interpreted -> Compiled transition";
+print "24. Stability update and systems fix.";
